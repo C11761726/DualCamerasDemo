@@ -1,13 +1,26 @@
 package com.example.dualcamerasdemo;
 
+import android.app.ActionBar;
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Color;
 import android.graphics.SurfaceTexture;
 import android.hardware.usb.UsbDevice;
+import android.support.constraint.ConstraintLayout;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.Gravity;
+import android.view.LayoutInflater;
 import android.view.Surface;
+import android.view.View;
+import android.view.WindowManager;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.RelativeLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import com.serenegiant.usb.IFrameCallback;
@@ -20,6 +33,7 @@ import com.techshino.utils.FileUtils;
 import com.techshino.utils.Logs;
 
 import java.nio.ByteBuffer;
+import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
     private static final boolean DEBUG = true;  // FIXME set false when production
@@ -96,12 +110,12 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onDettach(final UsbDevice device) {
             Toast.makeText(MainActivity.this, "USB_DEVICE_DETACHED", Toast.LENGTH_SHORT).show();
-//            if (device.getProductId() == mDualFaceConfig.getPidL()) {
-//                mLeftControlBlock = null;
-//            }
-//            if (device.getProductId() == mDualFaceConfig.getPidR()) {
-//                mRightControlBlock = null;
-//            }
+            if (device.getProductId() == mDualFaceConfig.getPidL()) {
+                mLeftControlBlock = null;
+            }
+            if (device.getProductId() == mDualFaceConfig.getPidR()) {
+                mRightControlBlock = null;
+            }
         }
 
         @Override
@@ -111,10 +125,10 @@ public class MainActivity extends AppCompatActivity {
     };
 
     private void openCameraDevice(UsbDevice device, final USBMonitor.UsbControlBlock ctrlBlock) {
-
-        if (device.getProductName().contains("Camera")) {
-            if ((mUVCCameraL == null) && !bUsedL) {
-                bUsedL = true;
+        int pidL = getPid("PidL");
+        int pidR = getPid("PidR");
+        if (device.getProductId() == pidL) {
+            if (mUVCCameraL == null) {
                 new Thread(() -> {
                     final UVCCamera camera = new UVCCamera();
                     camera.open(ctrlBlock);
@@ -156,52 +170,54 @@ public class MainActivity extends AppCompatActivity {
                         mUVCCameraL = camera;
                     }
                 }).start();
-            } else {
-                if (mUVCCameraR == null) {
-                    new Thread(() -> {
-                        final UVCCamera camera = new UVCCamera();
-                        camera.open(ctrlBlock);
-                        if (mRightControlBlock == null) {
-                            mRightControlBlock = ctrlBlock;
-                        }
+            }
+        }
 
-                        Log.d(TAG, "camera.open:" + ctrlBlock);
+        if (device.getProductId() == pidR) {
+            if (mUVCCameraR == null) {
+                new Thread(() -> {
+                    final UVCCamera camera = new UVCCamera();
+                    camera.open(ctrlBlock);
+                    if (mRightControlBlock == null) {
+                        mRightControlBlock = ctrlBlock;
+                    }
+
+                    Log.d(TAG, "camera.open:" + ctrlBlock);
+                    try {
+                        camera.setPreviewSize(
+                                UVCCamera.DEFAULT_PREVIEW_WIDTH,
+                                UVCCamera.DEFAULT_PREVIEW_HEIGHT,
+                                UVCCamera.FRAME_FORMAT_MJPEG, BANDWIDTH_FACTORS[1]);
+                    } catch (final IllegalArgumentException e) {
+                        // fallback to YUV mode
                         try {
                             camera.setPreviewSize(
                                     UVCCamera.DEFAULT_PREVIEW_WIDTH,
                                     UVCCamera.DEFAULT_PREVIEW_HEIGHT,
-                                    UVCCamera.FRAME_FORMAT_MJPEG, BANDWIDTH_FACTORS[1]);
-                        } catch (final IllegalArgumentException e) {
-                            // fallback to YUV mode
-                            try {
-                                camera.setPreviewSize(
-                                        UVCCamera.DEFAULT_PREVIEW_WIDTH,
-                                        UVCCamera.DEFAULT_PREVIEW_HEIGHT,
-                                        UVCCamera.DEFAULT_PREVIEW_MODE);
-                            } catch (final IllegalArgumentException e1) {
-                                camera.destroy();
-                                return;
-                            }
+                                    UVCCamera.DEFAULT_PREVIEW_MODE);
+                        } catch (final IllegalArgumentException e1) {
+                            camera.destroy();
+                            return;
                         }
+                    }
 
-                        final SurfaceTexture st = mUVCCameraViewR.getSurfaceTexture();
-                        if (st != null) {
-                            mRightPreviewSurface = new Surface(st);
-                            camera.setPreviewDisplay(mRightPreviewSurface);
-                            camera.setFrameCallback(rightCallback,
-                                    UVCCamera.PIXEL_FORMAT_YUV420SP/*
-                                     * UVCCamera.
-                                     * PIXEL_FORMAT_NV21
-                                     */);
-                            rightFrame = true;
-                            camera.startPreview();
-                        }
-                        synchronized (mSync) {
-                            mUVCCameraR = camera;
+                    final SurfaceTexture st = mUVCCameraViewR.getSurfaceTexture();
+                    if (st != null) {
+                        mRightPreviewSurface = new Surface(st);
+                        camera.setPreviewDisplay(mRightPreviewSurface);
+                        camera.setFrameCallback(rightCallback,
+                                UVCCamera.PIXEL_FORMAT_YUV420SP/*
+                                 * UVCCamera.
+                                 * PIXEL_FORMAT_NV21
+                                 */);
+                        rightFrame = true;
+                        camera.startPreview();
+                    }
+                    synchronized (mSync) {
+                        mUVCCameraR = camera;
 //              callOnOpen(3000);
-                        }
-                    }).start();
-                }
+                    }
+                }).start();
             }
         }
     }
@@ -389,5 +405,174 @@ public class MainActivity extends AppCompatActivity {
                 mRightPreviewSurface = null;
             }
         }
+    }
+
+    public void onGetUsbDeviceInfo(View view) {
+        List<UsbDevice> devices = mUSBMonitor.getDeviceList();
+        if (devices == null) {
+            Toast.makeText(this, "没有检测到usb设备", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+//        for (UsbDevice device : devices) {
+//            int deviceId = device.getProductId();
+//        }
+
+        createToucher(devices);
+    }
+
+    private TextView tv2;
+
+    private void createToucher(List<UsbDevice> devices) {
+        //布局参数.
+        WindowManager.LayoutParams params;
+        //实例化的WindowManager.
+        WindowManager windowManager;
+        params = new WindowManager.LayoutParams();
+        windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
+        params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+        params.gravity = Gravity.CENTER;
+        params.width = 600;
+        params.height = 500;
+
+        RelativeLayout rly = new RelativeLayout(this);
+        rly.setBackgroundColor(Color.WHITE);
+        TextView tvTemp = null;
+        Button btnLTemp = null;
+        Button btnRTemp = null;
+        for (UsbDevice device : devices) {
+            TextView tv1 = new TextView(this);
+            tv1.setText("设备名：" + device.getProductName() + " 设备ID：" + device.getProductId());
+            tv1.setId(View.generateViewId());
+            RelativeLayout.LayoutParams rlp = new RelativeLayout.LayoutParams(
+                    RelativeLayout.LayoutParams.WRAP_CONTENT, RelativeLayout.LayoutParams.WRAP_CONTENT);
+            rlp.addRule(RelativeLayout.ALIGN_PARENT_LEFT);
+            rlp.leftMargin = 20;
+            rlp.topMargin = 20;
+            if (tvTemp != null) {
+                rlp.addRule(RelativeLayout.BELOW, tvTemp.getId());
+            }
+            rly.addView(tv1, rlp);
+            //加button
+            Button btnL = new Button(this);
+            btnL.setId(View.generateViewId());
+            btnL.setBackgroundColor(Color.GREEN);
+            btnL.setText("设置成左边");
+            rlp = new RelativeLayout.LayoutParams(
+                    RelativeLayout.LayoutParams.WRAP_CONTENT, RelativeLayout.LayoutParams.WRAP_CONTENT);
+            rlp.addRule(RelativeLayout.RIGHT_OF, tv1.getId());
+            if (tvTemp != null) {
+                rlp.addRule(RelativeLayout.BELOW, tvTemp.getId());
+            }
+            if (btnLTemp != null) {
+                rlp.addRule(RelativeLayout.ALIGN_LEFT, btnLTemp.getId());
+            } else {
+                rlp.leftMargin = 20;
+            }
+            btnL.setOnClickListener(v -> {
+                saveConfig("PidL", device.getProductId());
+                tv2.setText("左边ID：" + getPid("PidL") + " 右边ID：" + getPid("PidR"));
+            });
+            rly.addView(btnL, rlp);
+
+            Button btnR = new Button(this);
+            btnR.setBackgroundColor(Color.GREEN);
+            btnR.setId(View.generateViewId());
+            btnR.setText("设置成右边");
+            rlp = new RelativeLayout.LayoutParams(
+                    RelativeLayout.LayoutParams.WRAP_CONTENT, RelativeLayout.LayoutParams.WRAP_CONTENT);
+            rlp.addRule(RelativeLayout.RIGHT_OF, btnL.getId());
+            if (tvTemp != null) {
+                rlp.addRule(RelativeLayout.BELOW, tvTemp.getId());
+            }
+            if (btnRTemp != null) {
+                rlp.addRule(RelativeLayout.ALIGN_LEFT, btnRTemp.getId());
+            }
+            btnR.setOnClickListener(v -> {
+                saveConfig("PidR", device.getProductId());
+                tv2.setText("左边ID：" + getPid("PidL") + " 右边ID：" + getPid("PidR"));
+            });
+            rly.addView(btnR, rlp);
+
+            Button btn_Open = new Button(this);
+            btn_Open.setBackgroundColor(Color.GREEN);
+            btn_Open.setId(View.generateViewId());
+            btn_Open.setText("打开摄像头");
+            rlp = new RelativeLayout.LayoutParams(
+                    RelativeLayout.LayoutParams.WRAP_CONTENT, RelativeLayout.LayoutParams.WRAP_CONTENT);
+            rlp.addRule(RelativeLayout.RIGHT_OF, btnR.getId());
+            if (tvTemp != null) {
+                rlp.addRule(RelativeLayout.BELOW, tvTemp.getId());
+            }
+            btn_Open.setOnClickListener(v -> {
+                if (device.getProductId() == getPid("PidL")) {
+                    if (mLeftControlBlock == null) {
+                        mUSBMonitor.requestPermission(device);
+                    } else {
+                        openCameraDevice(device, mLeftControlBlock);
+                    }
+                }
+                if (device.getProductId() == getPid("PidR")) {
+                    if (mRightControlBlock == null) {
+                        mUSBMonitor.requestPermission(device);
+                    } else {
+                        openCameraDevice(device, mRightControlBlock);
+                    }
+                }
+            });
+            rly.addView(btn_Open, rlp);
+
+            tvTemp = tv1;
+            btnLTemp = btnL;
+            btnRTemp = btnR;
+        }
+
+        Button btn_close = new Button(this);
+        btn_close.setBackgroundColor(Color.RED);
+        btn_close.setId(View.generateViewId());
+        btn_close.setText("关闭摄像头");
+        RelativeLayout.LayoutParams rlp = new RelativeLayout.LayoutParams(
+                RelativeLayout.LayoutParams.WRAP_CONTENT, RelativeLayout.LayoutParams.WRAP_CONTENT);
+        rlp.addRule(RelativeLayout.CENTER_HORIZONTAL);
+        rlp.topMargin = 20;
+        if (tvTemp != null) {
+            rlp.addRule(RelativeLayout.BELOW, tvTemp.getId());
+        }
+        btn_close.setOnClickListener(v -> stopCamera());
+        rly.addView(btn_close, rlp);
+
+        tv2 = new TextView(this);
+        tv2.setText("左边ID：" + getPid("PidL") + " 右边ID：" + getPid("PidR"));
+        tv2.setId(View.generateViewId());
+        tv2.setTextSize(40);
+        rlp = new RelativeLayout.LayoutParams(
+                RelativeLayout.LayoutParams.WRAP_CONTENT, RelativeLayout.LayoutParams.WRAP_CONTENT);
+        rlp.addRule(RelativeLayout.CENTER_HORIZONTAL);
+        rlp.topMargin = 20;
+        if (tvTemp != null) {
+            rlp.addRule(RelativeLayout.BELOW, btn_close.getId());
+        }
+        rly.addView(tv2, rlp);
+
+        windowManager.addView(rly, params);
+    }
+
+    private void saveConfig(String pid, int productId) {
+        int pidL = getPid("PidL");
+        int pidR = getPid("PidR");
+        if ((pid.equals("PidL")) && (getPid("PidR") == productId)) {
+            saveConfig("PidR", 0);
+        } else if ((pid.equals("PidR")) && (getPid("PidL") == productId)) {
+            saveConfig("PidL", 0);
+        }
+        SharedPreferences sharedPreferences = getSharedPreferences("config", MODE_PRIVATE);
+        SharedPreferences.Editor editor = sharedPreferences.edit();
+        editor.putInt(pid, productId);
+        editor.commit();
+    }
+
+    private int getPid(String pid) {
+        SharedPreferences sharedPreferences = getSharedPreferences("config", MODE_PRIVATE);
+        return sharedPreferences.getInt(pid, -1);
     }
 }
